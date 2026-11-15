@@ -1,0 +1,854 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SignBridge – Accessible Meetings</title>
+<style>
+  :root {
+    --bg: #0f1218; --panel: #181c25; --panel2: #202634; --text: #eef1f6; --muted: #9aa3b2;
+    --accent: #4f8cff; --sign: #2ecc8f; --speech: #ffb547; --danger: #ff5d5d; --border: #2b3242;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  select, button, input[type=text] { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+  button { cursor: pointer; white-space: nowrap; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: var(--accent); border-color: var(--accent); }
+  button.off { background: #3a2026; border-color: var(--danger); }
+  button.primary { background: var(--accent); border-color: var(--accent); }
+  button.danger { background: var(--danger); border-color: var(--danger); }
+  .muted { color: var(--muted); font-size: 13px; }
+
+  /* ---------- Lobby ---------- */
+  #lobby { min-height: 100%; display: grid; place-items: center; padding: 20px; }
+  .lobby-card { width: min(460px, 100%); background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 28px; }
+  .lobby-card h1 { margin: 0 0 4px; font-size: 28px; }
+  .lobby-card p { margin: 0 0 20px; }
+  .lobby-card label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+  .lobby-card input, .lobby-card select { width: 100%; }
+  .row { display: flex; gap: 8px; }
+  .row input { flex: 1; }
+  .divider { text-align: center; color: var(--muted); font-size: 12px; margin: 16px 0; }
+  .big { width: 100%; padding: 12px; font-size: 16px; }
+  #lobbyStatus { margin-top: 14px; min-height: 18px; }
+  .err { color: var(--danger) !important; }
+
+  /* ---------- Meeting ---------- */
+  #app { display: none; height: 100%; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  .code { font-family: ui-monospace, Menlo, monospace; background: var(--panel2); padding: 4px 10px; border-radius: 6px; letter-spacing: .1em; }
+  .spacer { flex: 1; }
+  .layout { flex: 1; display: grid; grid-template-columns: 1fr 380px; min-height: 0; }
+  .stage { display: flex; flex-direction: column; min-height: 0; padding: 12px; gap: 12px; overflow-y: auto; }
+  .grid { flex: 1 0 auto; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); align-content: center; }
+  @media (max-width: 950px) {
+    #app { height: auto; min-height: 100%; }
+    .layout { display: flex; flex-direction: column; }
+    .stage { overflow: visible; }
+    .grid { grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); }
+  }
+
+  .tile { position: relative; background: #000; border-radius: 12px; overflow: hidden; aspect-ratio: 4/3; border: 2px solid transparent; }
+  .tile.speaking { border-color: var(--speech); }
+  .tile video, .tile canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .tile.mirror video, .tile.mirror canvas { transform: scaleX(-1); }
+  .tile .name { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,.6); padding: 3px 9px; border-radius: 6px; font-size: 13px; z-index: 2; }
+  .tile .badge { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,.6); padding: 3px 9px; border-radius: 6px; font-size: 13px; z-index: 2; }
+  .tile .cap { position: absolute; left: 8px; right: 8px; bottom: 12px; text-align: center; z-index: 2; font-size: var(--cap-size, 22px); line-height: 1.3; }
+  .tile .cap span { background: rgba(0,0,0,.78); padding: 3px 10px; border-radius: 6px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+  .tile .cap i { color: #ccc; }
+  .tile .signpop { position: absolute; left: 50%; top: 42%; transform: translate(-50%,-50%) scale(.9); background: rgba(46,204,143,.95); color: #04140d; font-weight: 700; padding: 10px 18px; border-radius: 12px; font-size: 22px; z-index: 3; opacity: 0; transition: all .25s; text-align: center; max-width: 90%; }
+  .tile .signpop.show { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+  .tile .holdbar { position: absolute; bottom: 0; left: 0; height: 6px; background: var(--sign); width: 0; z-index: 3; transition: width .08s linear; }
+  .tile .placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 48px; }
+
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; align-items: center; }
+  .controls label { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); }
+
+  aside { border-left: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  @media (max-width: 950px) { aside { border-left: 0; border-top: 1px solid var(--border); min-height: 500px; } }
+  .tabs { display: flex; border-bottom: 1px solid var(--border); }
+  .tabs button { flex: 1; border: 0; border-radius: 0; background: transparent; padding: 12px; color: var(--muted); }
+  .tabs button.active { color: var(--text); box-shadow: inset 0 -2px var(--accent); }
+  .pane { flex: 1; overflow-y: auto; padding: 12px; display: none; min-height: 0; }
+  .pane.active { display: block; }
+  #transcriptPane.active { display: flex; flex-direction: column; }
+  .log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+  .msg { padding: 8px 12px; border-radius: 10px; font-size: 14px; line-height: 1.4; }
+  .msg small { display: block; font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+  .msg.speech { background: rgba(255,181,71,.10); border-left: 3px solid var(--speech); }
+  .msg.sign { background: rgba(46,204,143,.12); border-left: 3px solid var(--sign); }
+  .msg.chat { background: rgba(79,140,255,.12); border-left: 3px solid var(--accent); }
+  .msg.system { color: var(--muted); font-size: 12px; text-align: center; padding: 2px; }
+  .type-row { display: flex; gap: 8px; margin-top: 10px; }
+  .type-row input { flex: 1; min-width: 0; }
+  .quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .quick button { font-size: 12px; padding: 5px 9px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 5px 4px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  td.ic { font-size: 22px; width: 36px; text-align: center; }
+  td.nm { color: var(--muted); width: 96px; font-size: 12px; }
+  td input { width: 100%; padding: 5px 8px; font-size: 13px; }
+  tr.active td { background: rgba(46,204,143,.2); }
+  .settings label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 5px; }
+  .settings input[type=text], .settings select { width: 100%; }
+  .settings .check { display: flex; gap: 8px; align-items: center; color: var(--text); }
+  .help { font-size: 13px; color: var(--muted); line-height: 1.55; }
+  .help b { color: var(--text); }
+  #banner { display: flex; gap: 12px; align-items: center; justify-content: center; padding: 9px 16px; font-size: 14px; background: #1d2a44; border-bottom: 1px solid var(--border); flex-wrap: wrap; text-align: center; }
+  #banner[hidden] { display: none; }
+  #banner.error { background: #3a1f25; }
+  #banner.ok { background: #173326; }
+  #banner button { padding: 4px 12px; }
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel2); border: 1px solid var(--border); padding: 10px 16px; border-radius: 10px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10; }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- ================= LOBBY ================= -->
+<div id="lobby">
+  <div class="lobby-card">
+    <h1>🤟 SignBridge</h1>
+    <p class="muted">Video meetings with live captions and sign-to-speech, built for Deaf and hard-of-hearing users. Free, no sign-up.</p>
+
+    <label>Your name</label>
+    <input type="text" id="nameInput" placeholder="e.g. Priya" maxlength="24">
+
+    <label>I will mainly…</label>
+    <select id="roleInput">
+      <option value="sign">Sign / type (Deaf or mute user)</option>
+      <option value="speak">Speak (hearing user)</option>
+    </select>
+
+    <div style="height:18px"></div>
+    <button class="primary big" id="btnCreate">➕ Create new meeting</button>
+    <div class="divider">or join one</div>
+    <div class="row">
+      <input type="text" id="codeInput" placeholder="Meeting code" maxlength="12" style="text-transform:uppercase">
+      <button id="btnJoin">Join</button>
+    </div>
+    <div class="divider">or</div>
+    <button class="big" id="btnSolo">Try it alone (no meeting)</button>
+    <div id="lobbyStatus" class="muted"></div>
+  </div>
+</div>
+
+<!-- ================= MEETING ================= -->
+<div id="app">
+  <header>
+    <h1>🤟 SignBridge</h1>
+    <span id="roomInfo" class="muted"></span>
+    <span class="spacer"></span>
+    <button id="btnInvite">🔗 Copy invite link</button>
+    <button class="danger" id="btnLeave">Leave</button>
+  </header>
+  <div id="banner" hidden><span id="bannerText"></span><button id="bannerBtn" hidden>Retry</button></div>
+
+  <div class="layout">
+    <div class="stage">
+      <div class="grid" id="grid"></div>
+      <div class="controls">
+        <button id="btnMic">🎙️ Mic on</button>
+        <button id="btnCam">📷 Camera on</button>
+        <button id="btnCaptions">💬 Caption my voice</button>
+        <button id="btnSign">🤟 Sign recognition</button>
+        <label>Caption size <input type="range" id="capSize" min="14" max="40" value="22"></label>
+      </div>
+    </div>
+
+    <aside>
+      <div class="tabs">
+        <button class="active" data-pane="transcriptPane">Transcript</button>
+        <button data-pane="signsPane">Signs</button>
+        <button data-pane="settingsPane">Settings</button>
+      </div>
+
+      <div class="pane active" id="transcriptPane">
+        <div class="log" id="log"></div>
+        <div class="quick" id="quick"></div>
+        <div class="type-row">
+          <input type="text" id="typeInput" placeholder="Type a message (spoken aloud for others)…">
+          <button class="primary" id="btnSend">Send</button>
+        </div>
+        <div class="type-row">
+          <button id="btnDownload" style="flex:1">⬇ Download transcript</button>
+        </div>
+      </div>
+
+      <div class="pane" id="signsPane">
+        <p class="help">Hold a sign steady for about a second until the green bar fills up. To send the same sign again, drop your hand first. <b>Wave</b> an open hand side to side to say goodbye. You can edit any phrase.</p>
+        <table id="dict"></table>
+      </div>
+
+      <div class="pane settings" id="settingsPane">
+        <label>Speech language (for captions)</label>
+        <select id="lang">
+          <option value="en-IN">English (India)</option>
+          <option value="en-US">English (US)</option>
+          <option value="en-GB">English (UK)</option>
+          <option value="hi-IN">Hindi</option>
+          <option value="ta-IN">Tamil</option>
+          <option value="te-IN">Telugu</option>
+          <option value="kn-IN">Kannada</option>
+          <option value="ml-IN">Malayalam</option>
+          <option value="mr-IN">Marathi</option>
+          <option value="bn-IN">Bengali</option>
+        </select>
+
+        <label>Key words to recognise better (names, technical terms, comma separated)</label>
+        <input type="text" id="keywords" placeholder="e.g. Nithish, React, internship, DTI">
+
+        <label>Voice for reading messages aloud</label>
+        <select id="voiceSel"></select>
+
+        <label class="check"><input type="checkbox" id="readAloud" checked> Read others' signs &amp; typed messages aloud</label>
+        <label class="check"><input type="checkbox" id="speakOwn"> Also speak my own signs on my device</label>
+        <label class="check"><input type="checkbox" id="autoPunct" checked> Auto punctuation &amp; capitals in captions</label>
+
+        <p class="help" style="margin-top:18px">
+          <b>Tips for better captions</b><br>
+          • Use <b>headphones</b> so your mic doesn't pick up other people's voices.<br>
+          • Each person captions <b>their own</b> voice, which is far more accurate than captioning sound from the speakers.<br>
+          • Works best in <b>Google Chrome</b> or <b>Microsoft Edge</b>.
+        </p>
+      </div>
+    </aside>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script type="module">
+import { GestureRecognizer, FilesetResolver, DrawingUtils }
+  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("show"), 2600); }
+
+/* =====================================================================
+   SIGN DICTIONARY
+   - "mp:*"  = shapes recognised by Google's MediaPipe gesture model
+   - "lm:*"  = extra shapes detected from the 21 hand landmarks (our rules)
+   ===================================================================== */
+const SIGNS = [
+  { id: "mp:Open_Palm",   icon: "✋", name: "Open palm",   phrase: "Hello everyone!" },
+  { id: "wave",           icon: "👋", name: "Wave",        phrase: "Goodbye, thank you for your time!" },
+  { id: "mp:Thumb_Up",    icon: "👍", name: "Thumbs up",   phrase: "Yes, I agree." },
+  { id: "mp:Thumb_Down",  icon: "👎", name: "Thumbs down", phrase: "No, I don't agree." },
+  { id: "lm:OK",          icon: "👌", name: "OK sign",     phrase: "Okay, I understand." },
+  { id: "lm:L",           icon: "🫲", name: "L shape",     phrase: "Sorry, I don't understand." },
+  { id: "lm:Three",       icon: "3️⃣", name: "Three fingers", phrase: "Could you please repeat that?" },
+  { id: "lm:Four",        icon: "4️⃣", name: "Four fingers (thumb in)", phrase: "Please speak a little slower." },
+  { id: "mp:Pointing_Up", icon: "☝️", name: "Point up",    phrase: "I have a question." },
+  { id: "mp:Victory",     icon: "✌️", name: "Victory",     phrase: "Thank you!" },
+  { id: "mp:ILoveYou",    icon: "🤟", name: "I-love-you",  phrase: "Nice to meet you." },
+  { id: "lm:Call",        icon: "🤙", name: "Call me (Y)", phrase: "Can you hear me?" },
+  { id: "lm:Horns",       icon: "🤘", name: "Index + pinky", phrase: "Could you type that in the chat?" },
+  { id: "mp:Closed_Fist", icon: "✊", name: "Fist",        phrase: "Please wait a moment." },
+];
+const signById = Object.fromEntries(SIGNS.map((s) => [s.id, s]));
+try { const saved = JSON.parse(localStorage.getItem("sb-phrases") || "{}"); SIGNS.forEach((s) => saved[s.id] && (s.phrase = saved[s.id])); } catch {}
+function savePhrases() { try { localStorage.setItem("sb-phrases", JSON.stringify(Object.fromEntries(SIGNS.map((s) => [s.id, s.phrase])))); } catch {} }
+SIGNS.forEach((s) => {
+  const tr = document.createElement("tr");
+  tr.id = "row-" + s.id.replace(":", "_");
+  tr.innerHTML = `<td class="ic">${s.icon}</td><td class="nm">${esc(s.name)}</td><td><input type="text" value="${esc(s.phrase)}"></td>`;
+  tr.querySelector("input").addEventListener("input", (e) => { s.phrase = e.target.value; savePhrases(); });
+  $("dict").appendChild(tr);
+});
+const QUICK = ["Yes", "No", "Please repeat", "One moment", "I can't hear you", "Thank you"];
+QUICK.forEach((q) => { const b = document.createElement("button"); b.textContent = q; b.onclick = () => sendMessage(q, "chat"); $("quick").appendChild(b); });
+
+/* =====================================================================
+   STATE
+   ===================================================================== */
+let myName = "", myRole = "sign", solo = false, isHost = false, roomCode = "";
+let peer = null, localStream = null, hasCamera = false;
+const people = new Map();   // peerId -> { name, conn, call, tile, video, capEl, popEl }
+let localTile = null;
+const transcript = [];
+
+/* =====================================================================
+   LOBBY
+   ===================================================================== */
+const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+// Accepts a code, a code with spaces/dashes, or a whole pasted invite link
+function normCode(v) {
+  const m = String(v).match(/room=([A-Za-z0-9]+)/);
+  if (m) v = m[1];
+  return String(v).toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+const validCode = (c) => c.length === 6 && [...c].every((ch) => CODE_CHARS.includes(ch));
+const params = new URLSearchParams(location.search);
+if (params.get("room")) {
+  const c = normCode(params.get("room"));
+  $("codeInput").value = c;
+  $("btnJoin").classList.add("primary"); $("btnCreate").classList.remove("primary");
+  if (!validCode(c)) lobbyStatus(`"${c}" isn't a valid meeting code (codes are 6 characters, e.g. K7QX2P).`, true);
+  else lobbyStatus("Invite link detected: enter your name and press Join.");
+}
+try { $("nameInput").value = localStorage.getItem("sb-name") || ""; } catch {}
+
+function lobbyStatus(msg, err = false) { const s = $("lobbyStatus"); s.textContent = msg; s.classList.toggle("err", err); }
+function readLobby() {
+  myName = $("nameInput").value.trim() || "Guest";
+  myRole = $("roleInput").value;
+  try { localStorage.setItem("sb-name", myName); } catch {}
+}
+const genCode = () => Array.from({ length: 6 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 32)]).join("");
+const hostId = (code) => "signbridge-dti-" + code.toLowerCase();
+
+$("btnCreate").onclick = async () => { readLobby(); isHost = true; roomCode = genCode(); await enterMeeting(); };
+$("btnJoin").onclick = async () => {
+  readLobby();
+  roomCode = normCode($("codeInput").value);
+  $("codeInput").value = roomCode;
+  if (!roomCode) return lobbyStatus("Enter a meeting code.", true);
+  if (!validCode(roomCode)) return lobbyStatus(`"${roomCode}" isn't a valid code. Meeting codes are exactly 6 characters (no 0, O, 1 or I). Check the host's screen.`, true);
+  isHost = false; await enterMeeting();
+};
+$("codeInput").addEventListener("keydown", (e) => e.key === "Enter" && $("btnJoin").click());
+$("btnSolo").onclick = async () => { readLobby(); solo = true; await enterMeeting(); };
+
+async function getMedia() {
+  const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  const video = { width: 640, height: 480 };
+  for (const c of [{ audio, video }, { audio, video: false }, { audio: false, video }]) {
+    try { return await navigator.mediaDevices.getUserMedia(c); } catch {}
+  }
+  return new MediaStream();
+}
+// Peers need a video track to show a tile; send a name card if no camera
+function placeholderVideoTrack() {
+  const c = document.createElement("canvas"); c.width = 640; c.height = 480;
+  const g = c.getContext("2d");
+  const draw = () => { g.fillStyle = "#202634"; g.fillRect(0, 0, 640, 480); g.fillStyle = "#eef1f6"; g.font = "bold 72px system-ui"; g.textAlign = "center"; g.fillText(myName.slice(0, 1).toUpperCase(), 320, 260); g.font = "28px system-ui"; g.fillText("Camera off", 320, 320); };
+  draw(); setInterval(draw, 1000);
+  return c.captureStream(5).getVideoTracks()[0];
+}
+
+async function enterMeeting() {
+  lobbyStatus("Asking for camera & microphone…");
+  localStream = await getMedia();
+  hasCamera = localStream.getVideoTracks().length > 0;
+  if (!hasCamera) localStream.addTrack(placeholderVideoTrack());
+
+  $("lobby").style.display = "none";
+  $("app").style.display = "flex";
+  localTile = makeTile("local", myName + " (you)", true);
+  if (hasCamera) localTile.tile.classList.add("mirror");
+  localTile.video.srcObject = localStream;
+  localTile.video.muted = true;
+  localTile.video.play().catch(() => {});
+  updateMediaButtons();
+
+  if (solo) {
+    $("roomInfo").textContent = "Solo practice mode";
+    $("btnInvite").style.display = "none";
+    $("readAloud").checked = true; $("speakOwn").checked = true;
+    sysMsg("Solo mode: your signs and typed messages are spoken on this device.");
+  } else {
+    connectPeer();
+  }
+  // Auto-start the most useful feature for each role
+  if (myRole === "sign") {
+    if (hasCamera) startSign();
+    else setTimeout(() => banner("⚠️ No camera access, so sign recognition can't run. Open this page in Google Chrome and allow the camera (the address-bar camera icon).", "error"), 1500);
+  } else startCaptions();
+}
+
+/* =====================================================================
+   MEETING (WebRTC via PeerJS free public broker)
+   ===================================================================== */
+function banner(text, kind = "", retry = null) {
+  $("banner").hidden = !text; $("banner").className = kind;
+  $("bannerText").textContent = text || "";
+  $("bannerBtn").hidden = !retry; $("bannerBtn").onclick = retry;
+}
+let joinAttempts = 0, joinTimer = null;
+function tryJoinHost() {
+  joinAttempts++;
+  banner(`Joining meeting ${roomCode}… (attempt ${joinAttempts})`);
+  const old = people.get(hostId(roomCode));
+  if (old && !old.conn?.open) { people.delete(hostId(roomCode)); old.tile.remove(); }
+  connectTo(hostId(roomCode), true);
+  clearTimeout(joinTimer);
+  joinTimer = setTimeout(() => { if (!people.get(hostId(roomCode))?.conn?.open) joinFailed(); }, 10000);
+}
+function joinFailed() {
+  clearTimeout(joinTimer);
+  if (joinAttempts < 3) return setTimeout(tryJoinHost, 1500);
+  banner(`Couldn't find meeting ${roomCode}. Check the code, and make sure the host's tab is still open with the meeting running.`, "error",
+    () => { joinAttempts = 0; tryJoinHost(); });
+}
+
+function connectPeer(retry = 0) {
+  $("roomInfo").innerHTML = `Meeting code <span class="code">${roomCode}</span> · connecting…`;
+  banner("Connecting to the meeting server…");
+  peer = isHost ? new Peer(hostId(roomCode), { debug: 1 }) : new Peer({ debug: 1 });
+
+  peer.on("open", () => {
+    updateRoomInfo();
+    if (isHost) {
+      sysMsg(`Meeting created. Share the code ${roomCode} or the invite link.`);
+      banner(`✅ Meeting ready. Others can join with code ${roomCode} (keep this tab open).`, "ok");
+    } else tryJoinHost();
+  });
+  peer.on("connection", setupConn);
+  peer.on("call", (call) => { call.answer(localStream); handleCall(call); });
+  peer.on("disconnected", () => { try { peer.reconnect(); } catch {} });
+  peer.on("error", (err) => {
+    if (err.type === "unavailable-id" && isHost && retry < 3) { roomCode = genCode(); peer.destroy(); connectPeer(retry + 1); }
+    else if (err.type === "peer-unavailable") {
+      if (!isHost && !people.get(hostId(roomCode))?.conn?.open) joinFailed();
+    }
+    else if (["network", "server-error", "socket-error", "socket-closed"].includes(err.type))
+      banner("Can't reach the free meeting server. Check your internet connection.", "error", () => { peer.destroy(); connectPeer(); });
+    else if (err.type === "browser-incompatible") banner("This browser can't do video calls. Please use Google Chrome.", "error");
+    else sysMsg("Connection error: " + err.type);
+  });
+}
+function connectTo(id, force = false) {
+  if (id === peer.id || (!force && people.get(id)?.conn)) return;
+  const conn = peer.connect(id, { metadata: { name: myName }, reliable: true });
+  setupConn(conn, true);
+  handleCall(peer.call(id, localStream, { metadata: { name: myName } }), true);
+}
+// metadata.name is the *caller's* name, so only trust it on incoming connections
+function setupConn(conn, outgoing = false) {
+  conn.on("open", () => {
+    const p = ensurePerson(conn.peer, outgoing ? undefined : conn.metadata?.name);
+    if (p.conn && p.conn !== conn) { try { p.conn.close(); } catch {} }
+    p.conn = conn;
+    if (isHost && people.size > 4) { conn.send({ type: "full" }); setTimeout(() => conn.close(), 300); return; }
+    conn.send({ type: "hello", name: myName });
+    if (isHost) conn.send({ type: "peers", ids: [...people.keys()].filter((k) => k !== conn.peer) });
+    if (!isHost && conn.peer === hostId(roomCode)) { clearTimeout(joinTimer); banner(""); toast("✅ Joined the meeting"); }
+    if (isHost) banner("");
+    updateRoomInfo();
+  });
+  conn.on("data", (d) => onData(conn.peer, d));
+  conn.on("close", () => removePerson(conn.peer));
+  conn.on("error", () => removePerson(conn.peer));
+}
+function handleCall(call, outgoing = false) {
+  if (!call) return;
+  const p = ensurePerson(call.peer, outgoing ? undefined : call.metadata?.name);
+  p.call = call;
+  call.on("stream", (s) => { p.video.srcObject = s; p.video.play().catch(() => {}); p.tile.querySelector(".placeholder")?.remove(); });
+  call.on("close", () => removePerson(call.peer));
+}
+function ensurePerson(id, name) {
+  let p = people.get(id);
+  if (!p) {
+    p = makeTile(id, name || "Guest");
+    p.name = name || "Guest";
+    people.set(id, p);
+  } else if (name && name !== p.name) { p.name = name; p.tile.querySelector(".name").textContent = name; }
+  if (name && !p.announced) { p.announced = true; sysMsg(`${p.name} joined.`); updateRoomInfo(); }
+  return p;
+}
+function removePerson(id) {
+  const p = people.get(id);
+  if (!p) return;
+  people.delete(id);
+  p.tile.remove();
+  try { p.call?.close(); p.conn?.close(); } catch {}
+  if (p.announced) sysMsg(`${p.name} left.`);
+  if (!isHost && id === hostId(roomCode) && p.announced) banner("The host left the meeting.", "error");
+  updateRoomInfo();
+}
+function broadcast(msg) { for (const p of people.values()) if (p.conn?.open) p.conn.send(msg); }
+function updateRoomInfo() {
+  if (solo) return;
+  $("roomInfo").innerHTML = `Meeting code <span class="code">${roomCode}</span> · ${people.size + 1} in call`;
+}
+
+function onData(from, d) {
+  const p = people.get(from) || ensurePerson(from);
+  switch (d.type) {
+    case "hello": ensurePerson(from, d.name); break;
+    case "peers": d.ids.forEach(connectTo); break;
+    case "full": toast("Meeting is full (max 4)."); leave(); break;
+    case "caption":
+      showCaption(p, d.text, d.final);
+      if (d.final) addMsg("speech", p.name, d.text);
+      break;
+    case "sign":
+    case "chat":
+      addMsg(d.type, p.name, d.text);
+      popSign(p, (d.type === "sign" ? "🤟 " : "⌨️ ") + d.text);
+      if ($("readAloud").checked) speak(d.text);
+      break;
+  }
+}
+
+/* =====================================================================
+   TILES
+   ===================================================================== */
+function makeTile(id, name, local = false) {
+  const tile = document.createElement("div");
+  tile.className = "tile" + (local ? " local" : "");
+  tile.innerHTML = `<video autoplay playsinline></video>${local ? '<canvas></canvas><div class="holdbar"></div>' : '<div class="placeholder">⏳</div>'}
+    <div class="name">${esc(name)}</div><div class="badge" hidden></div><div class="cap"></div><div class="signpop"></div>`;
+  $("grid").appendChild(tile);
+  return { tile, video: tile.querySelector("video"), capEl: tile.querySelector(".cap"), popEl: tile.querySelector(".signpop") };
+}
+function showCaption(p, text, final) {
+  p.capText = final ? text : p.capText || "";
+  p.capEl.innerHTML = text ? `<span>${final ? esc(text) : "<i>" + esc(text) + "</i>"}</span>` : "";
+  p.tile.classList.add("speaking");
+  clearTimeout(p.capTimer);
+  p.capTimer = setTimeout(() => { p.capEl.innerHTML = ""; p.tile.classList.remove("speaking"); }, final ? 5000 : 3000);
+}
+function popSign(p, text) {
+  p.popEl.textContent = text;
+  p.popEl.classList.add("show");
+  clearTimeout(p.popTimer);
+  p.popTimer = setTimeout(() => p.popEl.classList.remove("show"), 3000);
+}
+
+/* =====================================================================
+   TRANSCRIPT + MESSAGES
+   ===================================================================== */
+function addMsg(kind, who, text) {
+  const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const icon = { speech: "🎤", sign: "🤟", chat: "⌨️" }[kind];
+  transcript.push(`[${time}] ${who} (${kind}): ${text}`);
+  const div = document.createElement("div");
+  div.className = "msg " + kind;
+  div.innerHTML = `<small>${icon} ${esc(who)} · ${time}</small>${esc(text)}`;
+  $("log").appendChild(div);
+  $("log").scrollTop = $("log").scrollHeight;
+}
+function sysMsg(text) {
+  const div = document.createElement("div"); div.className = "msg system"; div.textContent = text;
+  $("log").appendChild(div); $("log").scrollTop = $("log").scrollHeight;
+}
+function sendMessage(text, kind) {
+  text = text.trim(); if (!text) return;
+  addMsg(kind, myName + " (you)", text);
+  popSign(localTile, (kind === "sign" ? "🤟 " : "⌨️ ") + text);
+  const listeners = [...people.values()].filter((p) => p.conn?.open).length;
+  broadcast({ type: kind, text });
+  // Others hear it on their device. If nobody else is here, speak it on this device so it's never silent.
+  if (solo || listeners === 0 || $("speakOwn").checked) speak(text);
+  if (!solo) toast(listeners ? `🔊 Spoken aloud for ${listeners} other ${listeners > 1 ? "people" : "person"}` : "🔊 No one else in the call yet, so it's spoken on this device");
+}
+$("btnSend").onclick = () => { sendMessage($("typeInput").value, "chat"); $("typeInput").value = ""; };
+$("typeInput").addEventListener("keydown", (e) => e.key === "Enter" && $("btnSend").click());
+$("btnDownload").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([transcript.join("\n")], { type: "text/plain" }));
+  a.download = `signbridge-transcript-${new Date().toISOString().slice(0, 10)}.txt`; a.click();
+};
+$("btnInvite").onclick = async () => {
+  const link = `${location.origin}${location.pathname}?room=${roomCode}`;
+  try { await navigator.clipboard.writeText(link); toast("Invite link copied!"); } catch { prompt("Copy this invite link:", link); }
+};
+$("btnLeave").onclick = () => leave();
+function leave() {
+  try { peer?.destroy(); } catch {}
+  localStream?.getTracks().forEach((t) => t.stop());
+  location.href = location.pathname;
+}
+document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll(".tabs button, .pane").forEach((x) => x.classList.remove("active"));
+  b.classList.add("active"); $(b.dataset.pane).classList.add("active");
+});
+$("capSize").oninput = (e) => document.documentElement.style.setProperty("--cap-size", e.target.value + "px");
+
+/* =====================================================================
+   MIC / CAMERA
+   ===================================================================== */
+const micTrack = () => localStream.getAudioTracks()[0];
+const camTrack = () => localStream.getVideoTracks()[0];
+function updateMediaButtons() {
+  const m = micTrack(), c = camTrack();
+  $("btnMic").textContent = !m ? "🎙️ No mic" : m.enabled ? "🎙️ Mic on" : "🔇 Mic off";
+  $("btnMic").className = m && m.enabled ? "" : "off";
+  $("btnCam").textContent = !hasCamera ? "📷 No camera" : c.enabled ? "📷 Camera on" : "📷 Camera off";
+  $("btnCam").className = hasCamera && c.enabled ? "" : "off";
+}
+$("btnMic").onclick = () => {
+  const m = micTrack(); if (!m) return toast("No microphone found.");
+  m.enabled = !m.enabled; updateMediaButtons();
+  if (!m.enabled && captionsOn) { stopCaptions(); toast("Mic muted: captions paused."); }
+};
+$("btnCam").onclick = () => {
+  const c = camTrack(); if (!c || !hasCamera) return toast("No camera found.");
+  c.enabled = !c.enabled; updateMediaButtons();
+  if (!c.enabled && signOn) stopSign();
+};
+
+/* =====================================================================
+   TEXT TO SPEECH
+   ===================================================================== */
+let speaking = false, voices = [];
+function loadVoices() {
+  voices = speechSynthesis.getVoices();
+  const sel = $("voiceSel"), prev = sel.value;
+  sel.innerHTML = '<option value="">Automatic (best match)</option>' +
+    voices.map((v, i) => `<option value="${i}">${esc(v.name)} (${v.lang})</option>`).join("");
+  sel.value = prev;
+}
+if ("speechSynthesis" in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+function pickVoice() {
+  if ($("voiceSel").value !== "") return voices[+$("voiceSel").value];
+  const lang = $("lang").value, base = lang.split("-")[0];
+  const score = (v) => (v.lang === lang ? 4 : v.lang.startsWith(base) ? 2 : 0) + (/natural|neural|google|premium|enhanced/i.test(v.name) ? 1 : 0);
+  return [...voices].sort((a, b) => score(b) - score(a))[0];
+}
+function speak(text) {
+  if (!("speechSynthesis" in window)) return;
+  const u = new SpeechSynthesisUtterance(text);
+  const v = pickVoice(); if (v) { u.voice = v; u.lang = v.lang; }
+  u.rate = 1;
+  u.onstart = () => { speaking = true; pauseRec(); };
+  u.onend = u.onerror = () => { speaking = false; resumeRec(); };
+  speak.keep = u;                 // Chrome bug: unreferenced utterances can be garbage-collected and go silent
+  speechSynthesis.resume();       // Chrome bug: the speech queue can get stuck "paused"
+  speechSynthesis.speak(u);
+}
+
+/* =====================================================================
+   LIVE CAPTIONS – improved
+   - captions your OWN mic (clean audio) and sends text to everyone
+   - auto-restarts when Chrome stops listening
+   - picks the alternative that contains your key words
+   - auto punctuation + capitalisation
+   ===================================================================== */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, captionsOn = false, restartDelay = 150, lastInterimSent = 0, phrasesOK = true;
+
+const keywords = () => $("keywords").value.split(",").map((w) => w.trim()).filter(Boolean);
+try { $("keywords").value = localStorage.getItem("sb-keywords") || ""; } catch {}
+$("keywords").onchange = () => { try { localStorage.setItem("sb-keywords", $("keywords").value); } catch {} if (captionsOn) { pauseRec(); resumeRec(); } };
+
+const Q_WORDS = /^(what|why|how|when|where|who|whom|which|whose|can|could|would|will|shall|should|do|does|did|is|are|am|was|were|have|has|may|might)\b/i;
+function tidy(t) {
+  t = t.trim().replace(/\s+/g, " ");
+  if (!t || !$("autoPunct").checked) return t;
+  t = t[0].toUpperCase() + t.slice(1);
+  if ($("lang").value.startsWith("en")) {
+    t = t.replace(/\bi\b/g, "I").replace(/\bi'(m|ll|ve|d)\b/gi, "I'$1");
+    for (const k of keywords()) t = t.replace(new RegExp(`\\b${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"), k);
+    if (!/[.?!]$/.test(t)) t += Q_WORDS.test(t) ? "?" : ".";
+  } else if (!/[.?!।]$/.test(t)) t += ".";
+  return t;
+}
+function bestAlternative(result) {
+  const kws = keywords().map((k) => k.toLowerCase());
+  let best = result[0];
+  if (kws.length) {
+    const hits = (a) => kws.filter((k) => a.transcript.toLowerCase().includes(k)).length;
+    for (let i = 1; i < result.length; i++) if (hits(result[i]) > hits(best)) best = result[i];
+  }
+  return best.transcript;
+}
+function buildRec() {
+  const r = new SR();
+  r.lang = $("lang").value;
+  r.continuous = true;
+  r.interimResults = true;
+  r.maxAlternatives = 3;
+  // Newer Chrome: contextual biasing towards key words (ignored where unsupported)
+  if (phrasesOK && keywords().length && "SpeechRecognitionPhrase" in window) {
+    try { r.phrases = keywords().map((k) => new window.SpeechRecognitionPhrase(k, 5)); } catch {}
+  }
+  r.onresult = (e) => {
+    let interim = "";
+    for (let k = e.resultIndex; k < e.results.length; k++) {
+      const res = e.results[k];
+      if (res.isFinal) {
+        const text = tidy(bestAlternative(res));
+        if (text) {
+          showCaption(localTile, text, true);
+          addMsg("speech", myName + " (you)", text);
+          broadcast({ type: "caption", text, final: true });
+        }
+      } else interim += res[0].transcript;
+    }
+    if (interim) {
+      showCaption(localTile, interim, false);
+      const now = Date.now();
+      if (now - lastInterimSent > 180) { lastInterimSent = now; broadcast({ type: "caption", text: interim, final: false }); }
+    }
+    restartDelay = 150;
+  };
+  r.onerror = (e) => {
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") { toast("Microphone permission denied."); stopCaptions(); }
+    else if (e.error === "phrases-not-supported") { phrasesOK = false; }
+    else if (e.error === "network") { restartDelay = Math.min(restartDelay * 2, 4000); }
+  };
+  r.onend = () => { if (captionsOn && !speaking) setTimeout(() => captionsOn && !speaking && safeStart(), restartDelay); };
+  return r;
+}
+function safeStart() { try { rec = buildRec(); rec.start(); } catch {} }
+function startCaptions() {
+  if (!SR) return toast("Live captions need Google Chrome or Edge.");
+  if (micTrack() && !micTrack().enabled) return toast("Turn your mic on first.");
+  captionsOn = true; safeStart();
+  $("btnCaptions").classList.add("on"); $("btnCaptions").textContent = "💬 Captioning my voice";
+}
+function stopCaptions() {
+  captionsOn = false; try { rec?.abort(); } catch {}
+  $("btnCaptions").classList.remove("on"); $("btnCaptions").textContent = "💬 Caption my voice";
+}
+function pauseRec() { if (captionsOn) try { rec?.abort(); } catch {} }
+function resumeRec() { if (captionsOn) setTimeout(() => captionsOn && !speaking && safeStart(), 300); }
+$("btnCaptions").onclick = () => (captionsOn ? stopCaptions() : startCaptions());
+$("lang").onchange = () => { if (captionsOn) { pauseRec(); resumeRec(); } };
+
+/* =====================================================================
+   SIGN RECOGNITION (MediaPipe on-device + landmark rules + wave)
+   ===================================================================== */
+let recognizer = null, signOn = false, lastVideoTime = -1;
+const HOLD_FRAMES = 16;
+let current = null, holdCount = 0, lastSent = null, noHandFrames = 0, prevWrist = null;
+const waveHist = []; let lastWaveAt = 0;
+
+async function loadModel() {
+  toast("Loading sign model…");
+  const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+  const opts = (delegate) => ({
+    baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task", delegate },
+    runningMode: "VIDEO", numHands: 1,
+    minHandDetectionConfidence: 0.6, minHandPresenceConfidence: 0.6, minTrackingConfidence: 0.5,
+  });
+  try { recognizer = await GestureRecognizer.createFromOptions(vision, opts("GPU")); }
+  catch { recognizer = await GestureRecognizer.createFromOptions(vision, opts("CPU")); }
+}
+async function startSign() {
+  const c = camTrack();
+  if (!hasCamera) return toast("No camera available for sign recognition.");
+  if (!c.enabled) return toast("Turn your camera on first.");
+  try {
+    if (!recognizer) await loadModel();
+    signOn = true;
+    $("btnSign").classList.add("on"); $("btnSign").textContent = "🤟 Recognising signs";
+    localTile.tile.querySelector(".badge").hidden = false;
+    requestAnimationFrame(loop);
+  } catch (err) { toast("Could not load sign model: " + err.message); }
+}
+function stopSign() {
+  signOn = false;
+  const cv = localTile.tile.querySelector("canvas"); cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
+  localTile.tile.querySelector(".badge").hidden = true;
+  localTile.tile.querySelector(".holdbar").style.width = "0";
+  $("btnSign").classList.remove("on"); $("btnSign").textContent = "🤟 Sign recognition";
+  document.querySelectorAll("tr.active").forEach((r) => r.classList.remove("active"));
+}
+$("btnSign").onclick = () => (signOn ? stopSign() : startSign());
+
+// ---- landmark geometry ----
+function handShape(lm) {
+  const d = (a, b) => Math.hypot(lm[a].x - lm[b].x, lm[a].y - lm[b].y);
+  const size = d(0, 9) || 1e-6;
+  const ext = (tip, pip) => d(0, tip) > d(0, pip) * 1.12;
+  const f = {
+    thumb: d(4, 9) > size * 0.75 && d(4, 5) > size * 0.42,
+    index: ext(8, 6), middle: ext(12, 10), ring: ext(16, 14), pinky: ext(20, 18),
+  };
+  const pinch = d(4, 8) < size * 0.32;
+  const is = (t, i, m, r, p) => f.thumb === t && f.index === i && f.middle === m && f.ring === r && f.pinky === p;
+  if (pinch && f.middle && f.ring && f.pinky) return "lm:OK";
+  if (is(true, false, false, false, true)) return "lm:Call";
+  if (is(true, true, false, false, false)) return "lm:L";
+  if (!f.thumb && f.index && !f.middle && !f.ring && f.pinky) return "lm:Horns";
+  if (f.index && f.middle && f.ring && !f.pinky) return "lm:Three";
+  if (is(false, true, true, true, true)) return "lm:Four";
+  return null;
+}
+function classify(res) {
+  const lm = res.landmarks?.[0];
+  if (!lm) return null;
+  const g = res.gestures?.[0]?.[0];
+  if (g && g.categoryName !== "None" && g.score > 0.65 && signById["mp:" + g.categoryName]) return { id: "mp:" + g.categoryName, score: g.score, lm };
+  const shape = handShape(lm);
+  if (shape) return { id: shape, score: 0.8, lm };
+  if (g && g.categoryName !== "None" && g.score > 0.5 && signById["mp:" + g.categoryName]) return { id: "mp:" + g.categoryName, score: g.score, lm };
+  return { id: null, lm };
+}
+// Wave = open hand moving side to side (≥3 direction changes)
+function detectWave(id, lm) {
+  const now = performance.now();
+  const open = id === "mp:Open_Palm" || id === "lm:Four";
+  if (!open) { waveHist.length = 0; return false; }
+  waveHist.push({ x: lm[0].x, t: now });
+  while (waveHist.length && now - waveHist[0].t > 1500) waveHist.shift();
+  if (waveHist.length < 8 || now - lastWaveAt < 2500) return false;
+  let flips = 0, dir = 0, lo = 1, hi = 0, anchor = waveHist[0].x;
+  for (const h of waveHist) {
+    lo = Math.min(lo, h.x); hi = Math.max(hi, h.x);
+    const delta = h.x - anchor;
+    if (Math.abs(delta) > 0.025) { const nd = Math.sign(delta); if (dir && nd !== dir) flips++; dir = nd; anchor = h.x; }
+  }
+  if (flips >= 3 && hi - lo > 0.08) { lastWaveAt = now; waveHist.length = 0; return true; }
+  return false;
+}
+
+function loop() {
+  if (!signOn) return;
+  const video = localTile.video;
+  if (video.currentTime !== lastVideoTime && video.videoWidth) {
+    lastVideoTime = video.currentTime;
+    const cv = localTile.tile.querySelector("canvas"), ctx = cv.getContext("2d");
+    cv.width = video.videoWidth; cv.height = video.videoHeight;
+    const res = recognizer.recognizeForVideo(video, performance.now());
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    if (res.landmarks?.length) {
+      const du = new DrawingUtils(ctx);
+      for (const lm of res.landmarks) {
+        du.drawConnectors(lm, GestureRecognizer.HAND_CONNECTIONS, { color: "#2ecc8f", lineWidth: 4 });
+        du.drawLandmarks(lm, { color: "#ffffff", radius: 3 });
+      }
+    }
+    handleSign(classify(res));
+  }
+  requestAnimationFrame(loop);
+}
+
+function handleSign(c) {
+  const badge = localTile.tile.querySelector(".badge"), bar = localTile.tile.querySelector(".holdbar");
+  document.querySelectorAll("tr.active").forEach((r) => r.classList.remove("active"));
+  if (!c || !c.id) {
+    current = null; holdCount = 0; bar.style.width = "0"; waveHist.length = 0; prevWrist = null;
+    badge.textContent = c ? "✋ hand seen: unknown sign" : "No hand";
+    if (!c && ++noHandFrames > 8) lastSent = null;   // hand dropped → can repeat
+    return;
+  }
+  noHandFrames = 0;
+
+  if (detectWave(c.id, c.lm)) { emitSign("wave"); bar.style.width = "0"; return; }
+
+  const s = signById[c.id];
+  $("row-" + c.id.replace(":", "_"))?.classList.add("active");
+  badge.textContent = `${s.icon} ${s.name}`;
+
+  // only count frames where the hand is held fairly still
+  const w = c.lm[0];
+  const moved = prevWrist ? Math.hypot(w.x - prevWrist.x, w.y - prevWrist.y) : 0;
+  prevWrist = { x: w.x, y: w.y };
+
+  if (c.id !== current) { current = c.id; holdCount = 0; }
+  if (c.id === lastSent) { bar.style.width = "100%"; return; }
+  holdCount = moved > 0.03 ? Math.max(0, holdCount - 2) : holdCount + 1;
+  bar.style.width = Math.min(100, (holdCount / HOLD_FRAMES) * 100) + "%";
+  if (holdCount >= HOLD_FRAMES) { emitSign(c.id); holdCount = 0; }
+}
+function emitSign(id) {
+  lastSent = id;
+  const s = signById[id];
+  $("row-" + id.replace(":", "_"))?.classList.add("active");
+  sendMessage(s.phrase, "sign");
+}
+</script>
+</body>
+</html>
